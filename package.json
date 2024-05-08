@@ -1,0 +1,21 @@
+{
+  "name": "webscraping",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@antiadmin/anticaptchaofficial": "^1.0.46",
+    "anticaptcha": "^2.2.0",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.4.5",
+    "puppeteer": "^22.8.0",
+    "request": "^2.88.2",
+    "request-promise": "^4.2.6"
+  }
+}
