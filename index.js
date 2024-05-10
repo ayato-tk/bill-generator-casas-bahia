@@ -1,85 +1,58 @@
-import puppeteer from "puppeteer";
-import dotenv from 'dotenv';
-import ac from "@antiadmin/anticaptchaofficial";
-import { win32 } from "node:path";
+import { downloadRetailFile } from "./process/retail.js";
+import { LowSync } from "lowdb";
+import { JSONFileSync } from "lowdb/node";
+import { v4 } from "uuid";
+import Queue from 'queue'
+import express from "express";
+import { Process } from "./process/process.js";
 
-dotenv.config();
+const app = express();
+const port = process.env.PORT || 8080;
 
-ac.setAPIKey(process.env.ANTICAPTCHA_KEY);
 
-async function init(browser, url) {
-    try {
-        const page = await browser.newPage();
-        await page.goto(url, { timeout: 10000 });
-        return page;
-    } catch (error) {
-        await browser.close();
-        const newBrowser = await puppeteer.launch({ headless: true, timeout: 0  });
-        return init(newBrowser, url);
-    }
-}
+//TODO: Transfer app logic to Typescript in future;
+const q = new Queue({ results: [] })
+const db = new LowSync(new JSONFileSync('./database/process.json'), { processes: [] });
 
-(async () => {
-    const browser = await puppeteer.launch({ headless: true, timeout: 0 });
-    const page =  await init(browser, process.env.URL);
-    const client = await page.target().createCDPSession();
+db.read();
 
-    await client.send('Page.setDownloadBehavior', {
-        behavior: 'allow',
-        downloadPath: win32.resolve(win32.normalize('./output'))
-    });
+const processes = db.data.processes;
 
-    const textInput = '[name="text-input"]';
-
-    // Aguarde até que o botão "Baixar minha fatura" esteja disponível e clique nele
-    await page.waitForSelector('.qr-btn', { timeout: 0 });
-    await page.click('.qr-btn');
-  
-    // Aguarde até que os campos do formulário estejam disponíveis e preencha-os
-    await page.waitForSelector(textInput, { timeout: 0 });
-    await page.type(textInput, process.env.CPF);
-    await page.click('.btn-send');
-
-    // se #recaptcha > fazer fluxo para quebrar o recaptcha
-    let recaptcha = false;
-    try{
-        await page.waitForSelector('#recaptcha', { visible: true, timeout: 60000 });
-        recaptcha = true;
-    } catch(err){
-        recaptcha = false;
-    }
+//Create retail process
+app.post('/retail', async (req,res) => {
+    q.push(downloadRetailFile)
     
-    if(recaptcha) {
-        const solution = (await ac.solveRecaptchaV2Proxyless(process.env.URL, process.env.RECAPTCHA_SITE_KEY));
-        console.log("recaptcha done.")
-        await page.evaluate((solution) => {
-            const element = document.querySelector('#g-recaptcha-response');
-            element.value = solution;
-            const changeEvent = new Event('change', { bubbles: true });
-            element.dispatchEvent(changeEvent);
-            sendReply({
-                'message': 'captcha_pronto'+solution,
-                'cognitive': false
-            });
-            hide_text_input();
-        }, solution);
-    }
+   const process = new Process(v4(), (new Date).toUTCString(), 'retail', 0, processes);
+   const processFile = await process.createProcess(db);
 
-    //Insere os dados do cartão no input
-    await page.waitForSelector(textInput, { timeout: 0 });
-    await page.type(textInput, process.env.CREDIT_CARD_FINAL_NUMBER);
-    await page.click('.btn-send');
+    res.send("Retail process added to queue");
+    q.start(async (err) => {
+      if (err) {
+        await process.updateProcessFile({ ...processFile, status: 3 }, db);
+        throw err;
+      } else {
+        await process.updateProcessFile({ ...processFile, status: 2 }, db);
+      }
+      console.log('all done:', q.results)
+    })
+});
 
-    //Baixa a fatura e salva na pasta download
-    const sleep = ms => new Promise(res => setTimeout(res, ms));
-    await sleep(10000)
-   
-    const downloadElement = await page.$('text/Baixar Fatura');
-    if(downloadElement) await downloadElement.click();
-    
-    // Aguarde um tempo suficiente para o download ser concluído antes de fechar o navegador
-    await sleep(6000);
-   
-    await browser.close();
-    process.exit();
-  })();
+//Get All
+app.get('/process', (req,res) => {
+  const page = req.query.page;
+  const pageSize = req.query.pageSize;
+  if(!page || !pageSize) return res.status(400).json({ message: "Page or pageSize is required!"})
+  res.json({ data: Process.getAllProcesses(page, pageSize, processes), page, pageSize });
+})
+
+//Get by unique
+app.get('/process/:id', (req,res) => res.json(Process.getProcessById(req.params.id, processes)));
+
+
+q.addEventListener('success', e => {
+    console.log('job finished processing:', e.detail.toString().replace(/\n/g, ''))
+  })
+
+
+
+app.listen(port, () => console.log(`Application initialized in port ${port}`))

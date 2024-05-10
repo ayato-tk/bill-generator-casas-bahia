@@ -1,0 +1,6 @@
+
+GET http://localhost:8080/process?page=1&pageSize=5
+
+GET http://localhost:8080/process/93e348a2-11bd-4ab6-a151-4928190dace2
+
+POST http://localhost:8080/retail
